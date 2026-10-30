@@ -5,6 +5,9 @@ import AppKit
 import Combine
 
 enum RunState: Equatable { case stopped, running, unknown }
+enum AppIdentity {
+    static var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev" }
+}
 
 @MainActor final class EnvironmentManager: ObservableObject {
     @Published var catalog = Catalog()
@@ -54,7 +57,7 @@ enum RunState: Equatable { case stopped, running, unknown }
         return p
     }
     func duplicate(_ profile: BrowserProfile) {
-        var copy = fresh(); copy.name = String((profile.name + " 副本").prefix(80)); copy.language = profile.language; copy.timezone = profile.timezone; copy.proxy = profile.proxy; copy.startURL = profile.startURL; copy.notes = profile.notes
+        var copy = fresh(); copy.name = String((profile.name + " 副本").prefix(80)); copy.language = profile.language; copy.timezone = profile.timezone; copy.proxy = profile.proxy; copy.http1Only = profile.http1Only; copy.startURL = profile.startURL; copy.notes = profile.notes
         if save(copy) { banner = "已复制配置并分配新指纹。新环境需要单独登录。" }
     }
     func rotate(_ profile: BrowserProfile) {
@@ -120,11 +123,36 @@ struct SolidButton: ButtonStyle {
     }
 }
 
-struct WindowGlass: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView(); view.material = .underWindowBackground; view.blendingMode = .behindWindow; view.state = .active; return view
+// Keep the system backdrop outside SwiftUI's composited layer tree. Hosting must
+// remain non-opaque so the actual desktop blur reaches the window's glass areas.
+final class ClearHostingView<Content: View>: NSHostingView<Content> {
+    override var isOpaque: Bool { false }
+}
+
+final class GlassRootView<Content: View>: NSView {
+    override var isOpaque: Bool { false }
+    init(rootView: Content) {
+        super.init(frame: .zero)
+        let effect = NSVisualEffectView()
+        effect.material = .sidebar
+        effect.blendingMode = .behindWindow
+        effect.state = .active
+        let hosting = ClearHostingView(rootView: rootView)
+        hosting.wantsLayer = true
+        hosting.layer?.isOpaque = false
+        hosting.layer?.backgroundColor = NSColor.clear.cgColor
+        for view in [effect, hosting] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: trailingAnchor),
+                view.topAnchor.constraint(equalTo: topAnchor),
+                view.bottomAnchor.constraint(equalTo: bottomAnchor)
+            ])
+        }
     }
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+    required init?(coder: NSCoder) { super.init(coder: coder) }
 }
 
 struct MainView: View {
@@ -144,8 +172,7 @@ struct MainView: View {
     }
     var body: some View {
         ZStack {
-            WindowGlass().ignoresSafeArea()
-            LinearGradient(colors: [Color(red: 0.10, green: 0.24, blue: 0.36).opacity(0.66), Color(red: 0.09, green: 0.24, blue: 0.23).opacity(0.56)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()
+            LinearGradient(colors: [Color(red: 0.10, green: 0.24, blue: 0.36).opacity(0.22), Color(red: 0.09, green: 0.24, blue: 0.23).opacity(0.18)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()
             HStack(spacing: 0) {
             sidebar.frame(width: 210)
             VStack(alignment: .leading, spacing: 0) {
@@ -160,7 +187,7 @@ struct MainView: View {
                 }
                 footer
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Palette.background.opacity(0.96)).clipShape(RoundedRectangle(cornerRadius: 24))
+                .background(Palette.background.opacity(0.92)).clipShape(RoundedRectangle(cornerRadius: 24))
                 .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(Color.white.opacity(0.07), lineWidth: 1) }
                 .padding(.top, 46).padding(.trailing, 12).padding(.bottom, 12)
             }
@@ -202,7 +229,7 @@ struct MainView: View {
             }.padding(14).frame(maxWidth: .infinity, alignment: .leading).background(Palette.surface).clipShape(RoundedRectangle(cornerRadius: 8)).padding(.bottom, 20)
             Button { manager.reveal() } label: { Label("资料目录", systemImage: "folder").font(.system(size: 12)) }.buttonStyle(.plain).foregroundColor(Palette.secondary).padding(.bottom, 17)
             Button { showAbout = true } label: { Label("关于分境", systemImage: "info.circle").font(.system(size: 12)) }.buttonStyle(.plain).foregroundColor(Palette.secondary)
-            Text("LOCAL FIRST  /  v0.1.0").font(.system(size: 8, design: .monospaced)).tracking(1).foregroundColor(Palette.secondary.opacity(0.5)).padding(.top, 22).padding(.bottom, 24)
+            Text("LOCAL FIRST  /  v\(AppIdentity.version)").font(.system(size: 8, design: .monospaced)).tracking(1).foregroundColor(Palette.secondary.opacity(0.5)).padding(.top, 22).padding(.bottom, 24)
         }.padding(.horizontal, 18)
     }
     private var header: some View {
@@ -301,6 +328,7 @@ struct ProfileEditor: View {
     @State private var proxyType = "http"
     @State private var proxyHost = ""
     @State private var proxyPort = ""
+    @State private var http1Only = false
     private let regions = [("美国 · 西部", "en-US", "America/Los_Angeles"), ("美国 · 东部", "en-US", "America/New_York"), ("英国", "en-GB", "Europe/London"), ("日本", "ja-JP", "Asia/Tokyo"), ("新加坡", "en-SG", "Asia/Singapore"), ("德国", "de-DE", "Europe/Berlin"), ("香港", "zh-TW", "Asia/Hong_Kong")]
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -324,6 +352,10 @@ struct ProfileEditor: View {
                         Picker("代理类型", selection: $proxyType) { Text("HTTP").tag("http"); Text("HTTPS").tag("https"); Text("SOCKS5").tag("socks5") }.pickerStyle(.segmented)
                         TextField("代理主机", text: $proxyHost, prompt: Text("127.0.0.1 或 proxy.example.com"))
                         TextField("端口", text: $proxyPort, prompt: Text("7890"))
+                        if proxyType != "socks5" {
+                            Toggle("HTTP/1.1 兼容模式", isOn: $http1Only)
+                            Text("Google 持续转圈或静态资源加载卡住时可尝试。仅影响此环境，可能降低并行加载速度；HTTPS 证书校验保持开启。").font(.system(size: 11)).foregroundStyle(Palette.secondary)
+                        }
                     }
                     Text("代理仅作用于当前环境；关闭时使用系统网络 / TUN。带密码代理请通过本机代理客户端转接。语言、时区请与你的出口地区对应。").font(.system(size: 11)).foregroundStyle(Palette.secondary)
                 }
@@ -332,6 +364,7 @@ struct ProfileEditor: View {
             HStack { Text("每个环境首次打开时需单独登录。").font(.system(size: 11)).foregroundStyle(Palette.secondary); Spacer(); Button("取消") { dismiss() }.buttonStyle(SolidButton()); Button(isNew ? "创建环境" : "保存修改") { save() }.buttonStyle(SolidButton(primary: true)).keyboardShortcut(.defaultAction) }
         }.padding(26).frame(width: 600).background(Palette.background).foregroundColor(.white).preferredColorScheme(.dark).onAppear {
             seedText = String(profile.seed)
+            http1Only = profile.http1Only == true
             if let proxy = try? BrowserProfile.proxyURL(profile.proxy) { proxyEnabled = true; proxyType = proxy.scheme == "socks5h" ? "socks5" : (proxy.scheme ?? "http"); proxyHost = proxy.host ?? ""; proxyPort = proxy.port.map(String.init) ?? "" }
         }
     }
@@ -344,6 +377,7 @@ struct ProfileEditor: View {
             let bracketed = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
             profile.proxy = "\(proxyType)://\(bracketed):\(port)"
         } else { profile.proxy = "" }
+        profile.http1Only = proxyEnabled && proxyType != "socks5" && http1Only
         do { try profile.validate(); guard !manager.catalog.profiles.contains(where: { $0.id != profile.id && $0.seed == profile.seed }) else { throw AppFailure("此指纹种子已被其他环境使用。") }; if manager.save(profile) { dismiss() } else { validationError = manager.error; manager.error = nil } }
         catch { validationError = error.localizedDescription }
     }
@@ -361,13 +395,13 @@ struct ProfileEditor: View {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 790), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "分境 · FenJing"; window.minSize = NSSize(width: 980, height: 650); window.titlebarAppearsTransparent = true; window.isOpaque = false; window.backgroundColor = .clear
         window.styleMask.insert(.fullSizeContentView); window.appearance = NSAppearance(named: .darkAqua)
-        window.contentView = NSHostingView(rootView: MainView(manager: manager)); window.center(); window.makeKeyAndOrderFront(nil); self.window = window
+        window.contentView = GlassRootView(rootView: MainView(manager: manager)); window.center(); window.makeKeyAndOrderFront(nil); self.window = window
         let menu = NSMenu(); let application = NSMenuItem(); let submenu = NSMenu(); submenu.addItem(withTitle: "关于分境", action: #selector(about), keyEquivalent: ""); submenu.addItem(.separator()); submenu.addItem(withTitle: "退出分境", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); application.submenu = submenu; menu.addItem(application)
         let edit = NSMenuItem(); edit.title = "编辑"; let editMenu = NSMenu(title: "编辑")
         for (title, selector, key) in [("撤销", Selector(("undo:")), "z"), ("剪切", #selector(NSText.cut(_:)), "x"), ("复制", #selector(NSText.copy(_:)), "c"), ("粘贴", #selector(NSText.paste(_:)), "v"), ("全选", #selector(NSText.selectAll(_:)), "a")] { editMenu.addItem(withTitle: title, action: selector, keyEquivalent: key) }; edit.submenu = editMenu; menu.addItem(edit); NSApp.mainMenu = menu
         NSApp.activate(ignoringOtherApps: true)
     }
-    @objc func about() { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "分境 · FenJing", .applicationVersion: "0.1.0", .credits: NSAttributedString(string: "Independent browser environments. Built-in fingerprint engine.")]) }
+    @objc func about() { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "分境 · FenJing", .applicationVersion: AppIdentity.version, .credits: NSAttributedString(string: "Independent browser environments. Built-in fingerprint engine.")]) }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { window?.makeKeyAndOrderFront(nil); return true }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }

@@ -1,13 +1,12 @@
-分境 / FenJing 的首个 macOS Apple Silicon 预览版。
+分境 / FenJing 0.1.1 预览版。
 
-- 自有磨砂玻璃图形界面、圆角卡片、图标与启动器。
-- 完整内置指纹浏览器引擎，无需安装 CCBaga 或其他浏览器。
-- 多个环境可同时运行，各自保存指纹、Cookie 和本地存储。
-- 默认起始页 Google；HTTP 为默认代理类型，HTTPS/SOCKS5 共用主机与端口表单。
-- Dashboard 提供单个、所选、全部浏览器的正常退出操作，资料保留。
+- 修复磨砂层的承载方式：原生窗口底层材质配合透明 SwiftUI 宿主，减轻颜色蒙层对背景的遮挡。
+- 管理器保留蓝色叠层图标，浏览器采用独立琥珀色地球图标，便于在 Dock 区分。
+- 为单个 HTTP/HTTPS 代理环境增加可选 HTTP/1.1 兼容模式；默认关闭，不影响其他环境，不关闭 HTTPS 证书校验。
+- 兼容旧环境配置，原有资料和指纹保留；复制配置时保留兼容选项。
 
-支持 macOS 13+ / Apple Silicon。当前使用本地临时签名，尚未完成 Developer ID 签名和 Apple 公证。没有提供 Intel 或 Windows 安装包；真实账号、付费代理供应商和代理账号密码未作为本次验收范围。
+网络诊断限制：已复现某一显式 HTTP 代理路径下 Google 静态资源/字体请求挂起；普通 Chrome 在同一路径也复现，系统路由对照通过。兼容模式曾完成多次完整加载，但仍观察到资源等待，不能声称已彻底修复所有代理的 Google 加载问题。
 
-安装：打开 DMG，将 FenJing 拖入 Applications。可使用随附 SHA256SUMS.txt 校验下载文件。
+支持 macOS 13+ / Apple Silicon。本地临时签名，尚未完成 Developer ID 签名和 Apple 公证。
 
 Author: **lynn** · **caused by codex**

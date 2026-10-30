@@ -34,7 +34,7 @@ for legacy in ['CCBrowser']:
 
 metadata.update(CFBundleName='FenJing Browser', CFBundleDisplayName='分境浏览器',
                 CFBundleIdentifier='local.fenjing.engine', CFBundleExecutable='FenJingBrowser',
-                CFBundleIconFile='app.icns', CFBundleGetInfoString='FenJing Browser. Includes Chromium and Fingerprint Chromium.')
+                CFBundleIconFile='FenJingBrowser.icns', CFBundleGetInfoString='FenJing Browser. Includes Chromium and Fingerprint Chromium.')
 metadata.pop('LSHasLocalizedDisplayName', None)
 # Chromium's custom identity/channel associates all profile instances with our engine.
 (target / 'Contents/Info.plist').write_bytes(plistlib.dumps(metadata))
@@ -42,7 +42,8 @@ for localized in (target / 'Contents/Resources').glob('*.lproj/InfoPlist.strings
     text = re.sub(r'^\s*CFBundle(?:Name|DisplayName)\s*=.*?;\s*$', '', localized.read_text(), flags=re.MULTILINE)
     text += '\nCFBundleName = "FenJing Browser";\nCFBundleDisplayName = "分境浏览器";\n'
     localized.write_text(text)
-shutil.copyfile(resources / 'AppIcon.icns', target / 'Contents/Resources/app.icns')
+shutil.copyfile(resources / 'BrowserIcon.icns', target / 'Contents/Resources/FenJingBrowser.icns')
+(target / 'Contents/Resources/app.icns').unlink(missing_ok=True)
 subprocess.run(['xcrun', 'clang', '-mmacosx-version-min=13.0', str(ROOT / 'Sources/EngineLauncher.c'), '-o', str(target / 'Contents/MacOS/FenJingBrowser')], check=True)
 
 magic = {b'\xfe\xed\xfa\xce', b'\xce\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe', b'\xbe\xba\xfe\xca'}

@@ -22,6 +22,8 @@ struct BrowserProfile: Codable, Identifiable, Equatable {
     var language = "en-US"
     var timezone = "America/Los_Angeles"
     var proxy = ""
+    // Optional so catalogs written before this setting continue to decode.
+    var http1Only: Bool? = nil
     var startURL = "https://www.google.com/"
     var notes = ""
     var color = 0
@@ -172,6 +174,9 @@ final class BrowserCore: @unchecked Sendable {
         ]
         if let proxy = try BrowserProfile.proxyURL(p.proxy) {
             args += ["--proxy-server=\(p.proxy.replacingOccurrences(of: "socks5h://", with: "socks5://"))", "--proxy-bypass-list=127.0.0.1;localhost;[::1]"]
+            if p.http1Only == true && ["http", "https"].contains(proxy.scheme ?? "") {
+                args.append("--disable-http2")
+            }
             if proxy.scheme?.hasPrefix("socks") == true {
                 let host = proxy.host!.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
                 args += ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE \(host), EXCLUDE 127.0.0.1, EXCLUDE localhost, EXCLUDE ::1"]

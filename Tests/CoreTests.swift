@@ -58,6 +58,17 @@ func rejects(_ message: String, _ action: () throws -> Void) throws {
         let httpArgs = try core.arguments(http, engine: engine)
         try expect(httpArgs.contains("--proxy-server=http://127.0.0.1:7890"), "per-environment HTTP proxy")
         try expect(httpArgs.contains("--proxy-bypass-list=127.0.0.1;localhost;[::1]"), "loopback bypass")
+        try expect(!httpArgs.contains("--disable-http2"), "normal HTTP proxy keeps HTTP/2")
+        http.http1Only = true
+        try expect(try core.arguments(http, engine: engine).contains("--disable-http2"), "HTTP proxy compatibility mode")
+        http.proxy = "https://127.0.0.1:7890"
+        try expect(try core.arguments(http, engine: engine).contains("--disable-http2"), "HTTPS proxy compatibility mode")
+        http.proxy = "socks5://127.0.0.1:7890"
+        try expect(try !core.arguments(http, engine: engine).contains("--disable-http2"), "SOCKS keeps default protocol")
+        http.proxy = ""
+        try expect(try !core.arguments(http, engine: engine).contains("--disable-http2"), "system route keeps default protocol")
+        let legacy = try JSONDecoder().decode(BrowserProfile.self, from: JSONEncoder().encode(a))
+        try expect(legacy.http1Only == nil, "legacy profile has no forced compatibility")
         print("PASS Google default and explicit HTTP proxy arguments")
         let profile = try repository.profileURL(a)
         try PrivateFiles.directory(profile.deletingLastPathComponent())
@@ -84,6 +95,7 @@ func rejects(_ message: String, _ action: () throws -> Void) throws {
         var a = BrowserProfile(); a.name = "Integration A"; a.seed = 135792468; a.language = "en-US"; a.timezone = "America/New_York"
         var b = BrowserProfile(); b.name = "Integration B"; b.seed = 246813579; b.language = "ja-JP"; b.timezone = "Asia/Tokyo"
         if CommandLine.arguments.count > 4 { a.proxy = CommandLine.arguments[3]; b.proxy = CommandLine.arguments[4] }
+        if ProcessInfo.processInfo.environment["FENJING_TEST_HTTP1"] == "1" { a.http1Only = true; b.http1Only = true }
         try repository.save(Catalog(profiles: [a, b]))
         defer { try? core.stop(a); try? core.stop(b) }
         // Launch concurrently through the exact core used by the GUI.
