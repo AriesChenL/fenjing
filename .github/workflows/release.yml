@@ -1,0 +1,104 @@
+# Adapted from liseami/CCBaga release.yml (MIT), commit 6db5ad5.
+# FenJing has its own native build; no Rust/Tauri, upstream host or signing secrets.
+name: Build and release macOS
+
+on:
+  pull_request:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a preview release after checks pass
+        type: boolean
+        default: false
+      tag:
+        description: Version tag (must match the built application)
+        type: string
+        default: v0.1.0
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6; upstream pin
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0; upstream pin
+        with:
+          python-version: '3.13'
+      - name: Check native tools and script syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          xcrun swift --version
+          bash -n scripts/build.sh scripts/test-core.sh scripts/package-dmg.sh
+          python3 -m compileall -q scripts
+      - name: Fetch pinned engine with SHA-256 verification
+        run: python3 scripts/fetch-engine.py
+      - name: Build self-contained native application
+        run: bash scripts/build.sh
+      - name: Run private-storage and launch-argument regression tests
+        run: bash scripts/test-core.sh
+      - name: Verify bundle independence and local signatures
+        run: python3 scripts/verify-bundle.py build/FenJing.app
+      - name: Check release version
+        env:
+          REQUESTED_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag }}
+        run: |
+          python3 - <<'PY'
+          import os, plistlib
+          tag = os.environ.get('REQUESTED_TAG', '')
+          version = plistlib.load(open('build/FenJing.app/Contents/Info.plist', 'rb'))['CFBundleShortVersionString']
+          if tag and tag != 'v' + version:
+              raise SystemExit('Release tag must match the built application version.')
+          PY
+      - name: Package and verify DMG
+        run: bash scripts/package-dmg.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7; upstream pin
+        with:
+          name: fenjing-macos-arm64
+          path: |
+            dist/FenJing-macOS-arm64.dmg
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8; upstream pin
+        with:
+          name: fenjing-macos-arm64
+          path: dist
+      - name: Verify and publish preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check SHA256SUMS.txt)
+          gh release create "$RELEASE_TAG" \
+            dist/FenJing-macOS-arm64.dmg dist/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "FenJing $RELEASE_TAG · macOS Apple Silicon Preview" \
+            --notes-file RELEASE_NOTES.md
